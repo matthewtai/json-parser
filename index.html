@@ -376,6 +376,9 @@
                 <button class="btn btn-secondary" onclick="selectDefaults()">
                     ⚡ Select Defaults
                 </button>
+                <button class="btn btn-secondary" onclick="selectAllFields()">
+                    ✅ Select All Fields
+                </button>
                 <button class="btn btn-secondary" onclick="clearAll()">
                     🗑️ Clear All
                 </button>
@@ -635,6 +638,14 @@
                 }
             });
             
+            updateResults();
+        }
+
+        function selectAllFields() {
+            // Check all available fields
+            document.querySelectorAll('#fieldsContainer input[type="checkbox"]').forEach(cb => {
+                cb.checked = true;
+            });
             updateResults();
         }
 
