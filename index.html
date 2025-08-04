@@ -430,43 +430,146 @@
                 allRecords = [];
                 availableFields.clear();
 
-                // Split input by lines and try to parse each as separate JSON
-                const lines = input.split('\n').filter(line => line.trim());
+                // First, try to clean up common JSON issues
+                let cleanedInput = input;
                 
-                for (const line of lines) {
-                    let trimmedLine = line.trim();
+                // Remove any BOM (Byte Order Mark) characters
+                cleanedInput = cleanedInput.replace(/^\uFEFF/, '');
+                
+                // Try to detect multiple JSON objects and fix them
+                let fixedInput = cleanedInput;
+                
+                // Check if we have multiple JSON objects concatenated together
+                if (fixedInput.includes('}{')) {
+                    // Multiple objects like {"a":1}{"b":2} -> [{"a":1},{"b":2}]
+                    fixedInput = '[' + fixedInput.replace(/}\s*{/g, '},{') + ']';
+                } else if (fixedInput.includes('}\n{') || fixedInput.includes('}\r\n{')) {
+                    // Multiple objects separated by newlines
+                    fixedInput = '[' + fixedInput.replace(/}\s*\n\s*{/g, '},{').replace(/}\s*\r\n\s*{/g, '},{') + ']';
+                }
+                
+                // Remove trailing commas before closing brackets/braces
+                fixedInput = fixedInput.replace(/,(\s*[}\]])/g, '$1');
+                
+                // Try parsing the fixed input first
+                try {
+                    const parsed = JSON.parse(fixedInput);
+                    processJSONObject(parsed);
+                    
+                    if (allRecords.length > 0) {
+                        populateFields();
+                        selectDefaults();
+                        updateResults();
+                        showAlert(`Successfully parsed ${allRecords.length} total records! (Auto-fixed multiple JSON objects)`, 'success');
+                        return;
+                    }
+                } catch (e) {
+                    // If that doesn't work, continue with line-by-line parsing
+                    console.log('Auto-fix failed, trying line-by-line parsing...');
+                }
+                
+                // Try to detect and handle multiple JSON objects line by line
+                const lines = cleanedInput.split(/\r?\n/).filter(line => line.trim());
+                let successfulParses = 0;
+                let parseErrors = [];
+                
+                for (let i = 0; i < lines.length; i++) {
+                    let trimmedLine = lines[i].trim();
+                    
+                    // Skip empty lines
+                    if (!trimmedLine) continue;
+                    
                     // Remove trailing commas
                     if (trimmedLine.endsWith(',')) {
-                        trimmedLine = trimmedLine.slice(0, -1);
+                        trimmedLine = trimmedLine.slice(0, -1).trim();
+                    }
+                    
+                    // Skip lines that are just brackets or commas
+                    if (trimmedLine === '{' || trimmedLine === '}' || trimmedLine === '[' || trimmedLine === ']' || trimmedLine === ',') {
+                        continue;
+                    }
+                    
+                    // Try to handle multiple JSON objects on the same line
+                    if (trimmedLine.includes('}{')) {
+                        // Split multiple objects on the same line
+                        const objectsOnLine = ('[' + trimmedLine.replace(/}\s*{/g, '},{') + ']');
+                        try {
+                            const parsed = JSON.parse(objectsOnLine);
+                            processJSONObject(parsed);
+                            successfulParses++;
+                            continue;
+                        } catch (e) {
+                            parseErrors.push(`Line ${i + 1}: ${e.message}`);
+                            continue;
+                        }
                     }
                     
                     try {
                         const parsed = JSON.parse(trimmedLine);
                         processJSONObject(parsed);
+                        successfulParses++;
                     } catch (e) {
-                        // If individual line parsing fails, try parsing the entire input as one JSON
+                        parseErrors.push(`Line ${i + 1}: ${e.message}`);
                         continue;
                     }
                 }
 
-                // If no records were found, try parsing the entire input as one JSON
-                if (allRecords.length === 0) {
-                    const parsed = JSON.parse(input);
-                    processJSONObject(parsed);
+                // If no individual lines worked, try one more comprehensive fix
+                if (successfulParses === 0) {
+                    try {
+                        // Try to extract all JSON objects using regex
+                        const jsonObjectRegex = /{[^{}]*(?:{[^{}]*}[^{}]*)*}/g;
+                        const matches = cleanedInput.match(jsonObjectRegex);
+                        
+                        if (matches && matches.length > 0) {
+                            const combinedArray = '[' + matches.join(',') + ']';
+                            const parsed = JSON.parse(combinedArray);
+                            processJSONObject(parsed);
+                            successfulParses = matches.length;
+                        } else {
+                            throw new Error('No valid JSON objects found');
+                        }
+                    } catch (e) {
+                        // Provide more specific error information
+                        let errorMessage = `JSON parsing failed: ${e.message}`;
+                        
+                        errorMessage += '\n\n🔧 Try these fixes:\n';
+                        errorMessage += '• If you have multiple JSON objects, wrap them in an array: [{"a":1},{"b":2}]\n';
+                        errorMessage += '• Make sure all property names are in double quotes\n';
+                        errorMessage += '• Remove trailing commas before closing brackets\n';
+                        errorMessage += '• Check for missing commas between objects\n';
+                        errorMessage += '• Ensure all strings are in double quotes (not single quotes)\n';
+                        errorMessage += '• Remove any extra characters between JSON objects';
+                        
+                        if (parseErrors.length > 0) {
+                            errorMessage += '\n\n📝 Specific errors found:\n' + parseErrors.slice(0, 5).join('\n');
+                            if (parseErrors.length > 5) {
+                                errorMessage += `\n... and ${parseErrors.length - 5} more errors`;
+                            }
+                        }
+                        
+                        showAlert(errorMessage);
+                        return;
+                    }
                 }
 
                 if (allRecords.length === 0) {
-                    showAlert('No valid records found in the JSON data.');
+                    showAlert('No valid records found in the JSON data. Please check your JSON format.');
                     return;
                 }
 
                 populateFields();
                 selectDefaults();
                 updateResults();
-                showAlert(`Successfully parsed ${allRecords.length} total records!`, 'success');
+                
+                let successMessage = `Successfully parsed ${allRecords.length} total records!`;
+                if (parseErrors.length > 0) {
+                    successMessage += ` (${parseErrors.length} lines had parsing errors and were skipped)`;
+                }
+                showAlert(successMessage, 'success');
                 
             } catch (error) {
-                showAlert(`Error parsing JSON: ${error.message}`);
+                showAlert(`Unexpected error: ${error.message}\n\nTip: Make sure your JSON is properly formatted with double quotes around property names and string values.`);
             }
         }
 
